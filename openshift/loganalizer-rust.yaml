@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: List
+items:
+# -------------------------------------------------------------
+# 1. ImageStream para a imagem compilada em Rust
+# -------------------------------------------------------------
+- apiVersion: image.openshift.io/v1
+  kind: ImageStream
+  metadata:
+    name: loganalizer-rust
+    labels:
+      app: loganalizer-rust
+
+# -------------------------------------------------------------
+# 2. BuildConfig (Build direto pelo cluster via Docker Strategy)
+# -------------------------------------------------------------
+- apiVersion: build.openshift.io/v1
+  kind: BuildConfig
+  metadata:
+    name: loganalizer-rust
+    labels:
+      app: loganalizer-rust
+  spec:
+    runPolicy: Serial
+    source:
+      type: Binary
+    strategy:
+      type: Docker
+      dockerStrategy:
+        dockerfilePath: Dockerfile
+    output:
+      to:
+        kind: ImageStreamTag
+        name: loganalizer-rust:latest
+
+# -------------------------------------------------------------
+# 3. PersistentVolumeClaim (Para persistir a base de logs)
+# -------------------------------------------------------------
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: loganalizer-data-pvc
+    labels:
+      app: loganalizer-rust
+  spec:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+
+# -------------------------------------------------------------
+# 4. Deployment (Pod com probes de saúde e limites de recursos)
+# -------------------------------------------------------------
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: loganalizer-rust
+    labels:
+      app: loganalizer-rust
+  spec:
+    replicas: 1
+    strategy:
+      type: Recreate
+    selector:
+      matchLabels:
+        app: loganalizer-rust
+    template:
+      metadata:
+        labels:
+          app: loganalizer-rust
+      spec:
+        containers:
+        - name: loganalizer-rust
+          image: image-registry.openshift-image-registry.svc:5000/detran-apps-internos/loganalizer-rust:latest
+          imagePullPolicy: Always
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+            name: http
+          env:
+          - name: PORT
+            value: "8080"
+          - name: DB_PATH
+            value: "/opt/app-root/src/data/logs_analysis.db"
+          - name: RUST_LOG
+            value: "info"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "128Mi"
+            limits:
+              cpu: "4000m"
+              memory: "2Gi"
+          volumeMounts:
+          - name: data-volume
+            mountPath: /opt/app-root/src/data
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+        volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: loganalizer-data-pvc
+
+# -------------------------------------------------------------
+# 5. Service (Exposição interna na porta 8080)
+# -------------------------------------------------------------
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: loganalizer-rust
+    labels:
+      app: loganalizer-rust
+  spec:
+    ports:
+    - name: 8080-tcp
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    selector:
+      app: loganalizer-rust
+
+# -------------------------------------------------------------
+# 6. Route (Exposição externa com TLS Edge e HTTPS automático)
+# -------------------------------------------------------------
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: loganalizer-rust
+    labels:
+      app: loganalizer-rust
+  spec:
+    to:
+      kind: Service
+      name: loganalizer-rust
+      weight: 100
+    port:
+      targetPort: 8080-tcp
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
