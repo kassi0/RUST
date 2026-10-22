@@ -1,12 +1,13 @@
 # =====================================================================
 # Estágio 1: Builder com Rust em Red Hat UBI9 (Universal Base Image)
 # =====================================================================
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4 as builder
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest as builder
 
 USER 0
 
 # Instala ferramentas essenciais de compilação
-RUN microdnf -y install gcc gcc-c++ make tar gzip curl pkgconfig openssl-devel && \
+# Nota: ubi-minimal já contém curl-minimal nativamente; pedir 'curl' causava conflito de pacote RPM
+RUN microdnf -y install gcc gcc-c++ make tar gzip && \
     microdnf clean all
 
 # Instala Rust Toolchain oficial estável
@@ -14,7 +15,7 @@ ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:$PATH
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain stable
+RUN curl-minimal --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain stable
 
 WORKDIR /opt/app-root/src
 
@@ -31,7 +32,7 @@ RUN cargo build --release
 # =====================================================================
 # Estágio 2: Runtime Seguro UBI9 Micro/Minimal (Non-root OpenShift UID)
 # =====================================================================
-FROM registry.access.redhat.com/ubi9/ubi-minimal:9.4
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 WORKDIR /opt/app-root/src
 
