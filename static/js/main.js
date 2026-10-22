@@ -53,6 +53,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const formData = new FormData(uploadForm);
+        // Garante inclusão explícita caso o input file tenha sido preenchido via drag & drop
+        if (fileInput.files && fileInput.files.length > 0) {
+            formData.set('logfile', fileInput.files[0]);
+        }
         submitBtn.disabled = true;
         submitBtn.innerHTML = `
             <svg class="animate-spin" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -3,7 +3,7 @@ mod models;
 mod parser;
 
 use axum::{
-    extract::{Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Redirect},
     routing::{get, post},
@@ -107,6 +107,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // Limite de upload configurável via env MAX_UPLOAD_SIZE_MB (padrão: 1024 MB = 1GB)
+    let max_upload_mb: usize = std::env::var("MAX_UPLOAD_SIZE_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024);
+    let max_upload_bytes = max_upload_mb * 1024 * 1024;
+
     let app = Router::new()
         .route("/", get(handle_index))
         .route("/upload", post(handle_upload))
@@ -120,6 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/logs", get(handle_api_logs))
         .nest_service("/static", ServeDir::new("static"))
         .layer(CorsLayer::permissive())
+        .layer(DefaultBodyLimit::max(max_upload_bytes))
         .with_state(state);
 
     let port: u16 = std::env::var("PORT")
@@ -184,49 +192,95 @@ async fn handle_upload(
     let mut filename = "logfile.log".to_string();
     let mut cores: usize = num_cpus::get();
     let mut is_persistent = false;
-    let mut file_bytes = Vec::new();
+    let temp_dir = std::env::temp_dir();
+    let temp_filepath = temp_dir.join(format!("upload_{}.log", uuid::Uuid::new_v4()));
+    let mut temp_file: Option<std::fs::File> = None;
+    let mut total_bytes_received: usize = 0;
 
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or_default().to_string();
-        if name == "logfile" {
-            if let Some(fname) = field.file_name() {
-                filename = fname.to_string();
-            }
-            if let Ok(bytes) = field.bytes().await {
-                file_bytes = bytes.to_vec();
-            }
-        } else if name == "cores" {
-            if let Ok(text) = field.text().await {
-                if let Ok(c) = text.parse::<usize>() {
-                    cores = c;
+    tracing::info!("Iniciando recebimento de upload multipart...");
+
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(mut field)) => {
+                let name = field.name().unwrap_or_default().to_string();
+                if name == "logfile" {
+                    if let Some(fname) = field.file_name() {
+                        filename = fname.to_string();
+                    }
+                    tracing::info!("Recebendo campo 'logfile': {}", filename);
+
+                    match std::fs::File::create(&temp_filepath) {
+                        Ok(mut f) => {
+                            use std::io::Write;
+                            while let Ok(Some(chunk)) = field.chunk().await {
+                                total_bytes_received += chunk.len();
+                                if let Err(e) = f.write_all(&chunk) {
+                                    tracing::error!("Erro ao gravar chunk em disco: {e}");
+                                    let _ = std::fs::remove_file(&temp_filepath);
+                                    return (
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        Json(serde_json::json!({
+                                            "success": false,
+                                            "error": format!("Falha de E/S ao salvar arquivo: {e}")
+                                        })),
+                                    ).into_response();
+                                }
+                            }
+                            temp_file = Some(f);
+                        }
+                        Err(e) => {
+                            tracing::error!("Erro ao criar arquivo temporário {:?}: {e}", temp_filepath);
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({
+                                    "success": false,
+                                    "error": format!("Falha ao criar arquivo temporário: {e}")
+                                })),
+                            ).into_response();
+                        }
+                    }
+                } else if name == "cores" {
+                    if let Ok(text) = field.text().await {
+                        if let Ok(c) = text.parse::<usize>() {
+                            cores = c;
+                        }
+                    }
+                } else if name == "is_persistent" {
+                    if let Ok(text) = field.text().await {
+                        is_persistent = text == "true" || text == "1";
+                    }
                 }
             }
-        } else if name == "is_persistent" {
-            if let Ok(text) = field.text().await {
-                is_persistent = text == "true" || text == "1";
+            Ok(None) => {
+                // Fim dos campos
+                break;
+            }
+            Err(e) => {
+                tracing::error!("Erro de parsing multipart: {e}");
+                let _ = std::fs::remove_file(&temp_filepath);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "success": false,
+                        "error": format!("Erro na transmissão do arquivo (excedeu limite ou conexão interrompida): {e}")
+                    })),
+                ).into_response();
             }
         }
     }
 
-    if file_bytes.is_empty() {
+    // Fecha o arquivo antes do processamento Rayon
+    drop(temp_file);
+
+    tracing::info!("Upload finalizado. Arquivo: {}, Tamanho: {} bytes, Cores selecionados: {}", filename, total_bytes_received, cores);
+
+    if total_bytes_received == 0 {
+        let _ = std::fs::remove_file(&temp_filepath);
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
                 "success": false,
                 "error": "Nenhum arquivo enviado ou arquivo vazio."
-            })),
-        ).into_response();
-    }
-
-    let temp_dir = std::env::temp_dir();
-    let temp_filepath = temp_dir.join(format!("upload_{}_{}", uuid::Uuid::new_v4(), filename));
-
-    if let Err(e) = std::fs::write(&temp_filepath, &file_bytes) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "success": false,
-                "error": format!("Falha ao salvar arquivo temporário: {e}")
             })),
         ).into_response();
     }

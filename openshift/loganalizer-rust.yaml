@@ -96,11 +96,11 @@ items:
             value: "info"
           resources:
             requests:
-              cpu: "500m"
-              memory: "128Mi"
+              cpu: "1000m"
+              memory: "512Mi"
             limits:
-              cpu: "4000m"
-              memory: "2Gi"
+              cpu: "16000m"
+              memory: "8Gi"
           volumeMounts:
           - name: data-volume
             mountPath: /opt/app-root/src/data
