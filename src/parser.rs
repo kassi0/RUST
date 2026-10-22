@@ -226,7 +226,17 @@ pub fn parse_iis_log_multicore<P: AsRef<Path> + Sync>(
     max_workers: usize,
 ) -> (Vec<LogRecord>, serde_json::Value) {
     let start_time = Instant::now();
-    let (fields, header_pos) = find_fields_header(&filepath);
+    let (mut fields, header_pos) = find_fields_header(&filepath);
+
+    if fields.is_empty() {
+        fields = vec![
+            "date".to_string(), "time".to_string(), "s-ip".to_string(), "cs-method".to_string(),
+            "cs-uri-stem".to_string(), "cs-uri-query".to_string(), "s-port".to_string(),
+            "cs-username".to_string(), "c-ip".to_string(), "cs(user-agent)".to_string(),
+            "cs(referer)".to_string(), "sc-status".to_string(), "sc-substatus".to_string(),
+            "sc-win32-status".to_string(), "time-taken".to_string(),
+        ];
+    }
 
     let mut field_indices: HashMap<String, usize> = HashMap::new();
     for (i, f) in fields.iter().enumerate() {
