@@ -11,7 +11,13 @@ pub struct Database {
 
 impl Database {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let path_ref = path.as_ref();
+        if let Some(parent) = path_ref.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        let conn = Connection::open(path_ref)?;
         let db = Database {
             conn: Mutex::new(conn),
         };

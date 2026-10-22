@@ -12,7 +12,7 @@ items:
       app: loganalizer-rust
 
 # -------------------------------------------------------------
-# 2. BuildConfig (Build direto pelo cluster via Docker Strategy)
+# 2. BuildConfig (Build automatizado via GitHub com Docker Strategy)
 # -------------------------------------------------------------
 - apiVersion: build.openshift.io/v1
   kind: BuildConfig
@@ -23,7 +23,10 @@ items:
   spec:
     runPolicy: Serial
     source:
-      type: Binary
+      type: Git
+      git:
+        uri: https://github.com/kassi0/RUST.git
+        ref: master
     strategy:
       type: Docker
       dockerStrategy:
@@ -32,6 +35,12 @@ items:
       to:
         kind: ImageStreamTag
         name: loganalizer-rust:latest
+    triggers:
+      - type: GitHub
+        github:
+          secret: loganalizer-github-webhook
+      - type: ConfigChange
+      - type: ImageChange
 
 # -------------------------------------------------------------
 # 3. PersistentVolumeClaim (Para persistir a base de logs)
