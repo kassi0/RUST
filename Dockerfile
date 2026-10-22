@@ -1,21 +1,7 @@
 # =====================================================================
-# Estágio 1: Builder com Rust em Red Hat UBI9 (Universal Base Image)
+# Estágio 1: Builder oficial Rust (rápido, estável e com toolchain pronta)
 # =====================================================================
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest as builder
-
-USER 0
-
-# Instala ferramentas essenciais de compilação
-# Nota: ubi-minimal já contém curl-minimal nativamente; pedir 'curl' causava conflito de pacote RPM
-RUN microdnf -y install gcc gcc-c++ make tar gzip && \
-    microdnf clean all
-
-# Instala Rust Toolchain oficial estável
-ENV RUSTUP_HOME=/opt/rustup \
-    CARGO_HOME=/opt/cargo \
-    PATH=/opt/cargo/bin:$PATH
-
-RUN curl-minimal --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain stable
+FROM docker.io/library/rust:1-slim as builder
 
 WORKDIR /opt/app-root/src
 
